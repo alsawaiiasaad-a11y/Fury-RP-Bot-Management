@@ -25,15 +25,13 @@ const client = new Client({
 });
 
 const TOKEN = process.env.TOKEN;
-const ASSIST_CHANNELS = (process.env.ASSIST_CHANNELS || '')
-  .split(',')
-  .filter(Boolean);
+const ASSIST_CHANNELS = (process.env.ASSIST_CHANNELS || '').split(',').filter(Boolean);
 
 // Ensure data.json exists
 if (!fs.existsSync('data.json')) fs.writeFileSync('data.json', '{}');
 let data = JSON.parse(fs.readFileSync('data.json'));
 
-// Buttons
+// ----- Buttons -----
 const row = new ActionRowBuilder().addComponents(
   new ButtonBuilder().setCustomId('in').setLabel('IN').setStyle(ButtonStyle.Success),
   new ButtonBuilder().setCustomId('out').setLabel('OUT').setStyle(ButtonStyle.Danger)
@@ -43,22 +41,27 @@ const row = new ActionRowBuilder().addComponents(
 async function sendPanel(channel) {
   try {
     const filePath = path.join(__dirname, 'assets', 'design.gif');
-    const files = fs.existsSync(filePath) ? [new AttachmentBuilder(filePath)] : [];
-    const image = fs.existsSync(filePath) ? 'attachment://design.gif' : null;
+    if (!fs.existsSync(filePath)) return channel.send("❌ GIF file not found in ./assets/design.gif");
+
+    const attachment = new AttachmentBuilder(filePath);
 
     const embed = new EmbedBuilder()
       .setColor(0x0099FF)
       .setTitle("Fury Management System")
-      .setDescription("Click (IN) to start the timer. Must click every 30 min.")
+      .setDescription("Click **IN** to start the timer. Must click every 30 min.")
+      .setImage('attachment://design.gif') // Must match attachment filename
       .setFooter({ text: "Fury RP" });
 
-    if (image) embed.setImage(image);
+    await channel.send({
+      embeds: [embed],
+      files: [attachment],
+      components: [row]
+    });
 
-    await channel.send({ embeds: [embed], files, components: [row] });
-    console.log("✅ PANEL SENT SUCCESSFULLY");
+    console.log("✅ Panel sent successfully with embed and GIF!");
   } catch (err) {
-    console.error("❌ PANEL ERROR:", err);
-    await channel.send("❌ Error sending panel. Check bot permissions.");
+    console.error("❌ Failed to send panel:", err);
+    await channel.send("❌ Failed to send panel. Check bot permissions.");
   }
 }
 
@@ -66,21 +69,18 @@ async function sendPanel(channel) {
 client.on('messageCreate', async (msg) => {
   if (!msg.guild || msg.author.bot) return;
 
-  // ----- PANEL -----
   if (msg.content === '!panel') {
-    console.log("⚡ PANEL COMMAND TRIGGERED");
     await sendPanel(msg.channel);
   }
 
-  // ----- LEADERBOARD -----
   if (msg.content === '!leaderboard') {
     try {
-      const sorted = Object.entries(data).sort((a, b) => b[1].total - a[1].total);
+      const sorted = Object.entries(data).sort((a,b) => b[1].total - a[1].total);
       let description = sorted.length ? '' : 'No leaderboard data yet!';
 
       for (let i = 0; i < sorted.length; i++) {
         const [userId, info] = sorted[i];
-        description += `**${i + 1}.** <@${userId}> — **${info.total} points**\n`;
+        description += `**${i+1}.** <@${userId}> — **${info.total} points**\n`;
       }
 
       await msg.channel.send({
@@ -97,7 +97,6 @@ client.on('messageCreate', async (msg) => {
     }
   }
 
-  // ----- RESET -----
   if (msg.content === '!resetpoints') {
     try {
       for (const userId in data) data[userId].total = 0;
@@ -192,16 +191,19 @@ setInterval(async () => {
 
 // ===== VOICE UPDATE =====
 client.on('voiceStateUpdate', async (oldState, newState) => {
-  const userId = oldState.member.id;
+  const member = newState.member || oldState.member;
+  const userId = member.id;
+
   if (!data[userId]?.active) return;
 
-  if (!oldState.selfDeaf && newState.selfDeaf) {
+  if ((oldState.selfDeaf === false && newState.selfDeaf === true) || newState.selfDeaf) {
     data[userId].active = false;
     data[userId].lastClick = 0;
+
     fs.writeFileSync('data.json', JSON.stringify(data, null, 2));
 
     try {
-      await oldState.member.send('🚫 You deafened yourself. Signed OUT.');
+      await member.send('🚫 You deafened yourself. Timer stopped and signed OUT.');
     } catch {}
   }
 });
