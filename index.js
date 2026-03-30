@@ -10,17 +10,16 @@ const {
   EmbedBuilder, 
   AttachmentBuilder 
 } = require('discord.js');
-
 const fs = require('fs');
 const path = require('path');
 
 const client = new Client({ 
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildVoiceStates,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
+  intents: [ 
+    GatewayIntentBits.Guilds, 
+    GatewayIntentBits.GuildVoiceStates, 
+    GatewayIntentBits.GuildMembers, 
+    GatewayIntentBits.GuildMessages, 
+    GatewayIntentBits.MessageContent 
   ] 
 });
 
@@ -41,10 +40,19 @@ const row = new ActionRowBuilder().addComponents(
 async function sendPanel(channel) {
   try {
     const filePath = path.join(__dirname, 'assets', 'design.gif');
+
+    // --- Debugging for Railway ---
+    console.log("🔹 __dirname:", __dirname);
+    const assetsPath = path.join(__dirname, 'assets');
+    if (fs.existsSync(assetsPath)) {
+      console.log("🔹 Files in assets:", fs.readdirSync(assetsPath));
+    } else {
+      console.log("❌ Assets folder missing!");
+    }
+
     if (!fs.existsSync(filePath)) return channel.send("❌ GIF file not found in ./assets/design.gif");
 
     const attachment = new AttachmentBuilder(filePath);
-
     const embed = new EmbedBuilder()
       .setColor(0x0099FF)
       .setTitle("Fury Management System")
@@ -52,12 +60,7 @@ async function sendPanel(channel) {
       .setImage('attachment://design.gif') // Must match attachment filename
       .setFooter({ text: "Fury RP" });
 
-    await channel.send({
-      embeds: [embed],
-      files: [attachment],
-      components: [row]
-    });
-
+    await channel.send({ embeds: [embed], files: [attachment], components: [row] });
     console.log("✅ Panel sent successfully with embed and GIF!");
   } catch (err) {
     console.error("❌ Failed to send panel:", err);
@@ -77,13 +80,12 @@ client.on('messageCreate', async (msg) => {
     try {
       const sorted = Object.entries(data).sort((a,b) => b[1].total - a[1].total);
       let description = sorted.length ? '' : 'No leaderboard data yet!';
-
       for (let i = 0; i < sorted.length; i++) {
         const [userId, info] = sorted[i];
         description += `**${i+1}.** <@${userId}> — **${info.total} points**\n`;
       }
 
-      await msg.channel.send({
+      await msg.channel.send({ 
         embeds: [new EmbedBuilder()
           .setColor(0xFFD700)
           .setTitle('🏆 Fury Leaderboard (1 point = 5min)')
@@ -102,7 +104,7 @@ client.on('messageCreate', async (msg) => {
       for (const userId in data) data[userId].total = 0;
       fs.writeFileSync('data.json', JSON.stringify(data, null, 2));
 
-      await msg.channel.send({
+      await msg.channel.send({ 
         embeds: [new EmbedBuilder()
           .setColor(0xFF0000)
           .setTitle('🏆 Fury Leaderboard Reset')
@@ -155,7 +157,6 @@ client.on(Events.InteractionCreate, async interaction => {
 // ===== TIMER LOOP =====
 setInterval(async () => {
   const now = Date.now();
-
   for (const [userId, user] of Object.entries(data)) {
     if (!user.active) continue;
 
@@ -164,8 +165,8 @@ setInterval(async () => {
       const m = g.members.cache.get(userId);
       if (m) { member = m; break; }
     }
-    if (!member || !member.voice.channelId) continue;
 
+    if (!member || !member.voice.channelId) continue;
     const inAssist = ASSIST_CHANNELS.includes(member.voice.channelId);
 
     if (!inAssist || member.voice.selfDeaf || now - user.lastClick > 30 * 60 * 1000) {
@@ -199,12 +200,8 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
   if ((oldState.selfDeaf === false && newState.selfDeaf === true) || newState.selfDeaf) {
     data[userId].active = false;
     data[userId].lastClick = 0;
-
     fs.writeFileSync('data.json', JSON.stringify(data, null, 2));
-
-    try {
-      await member.send('🚫 You deafened yourself. Timer stopped and signed OUT.');
-    } catch {}
+    try { await member.send('🚫 You deafened yourself. Timer stopped and signed OUT.'); } catch {}
   }
 });
 
