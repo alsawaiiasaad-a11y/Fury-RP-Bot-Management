@@ -1,121 +1,100 @@
-require('dotenv').config({ path: './.env' });
-
-const { 
-  Client, 
-  GatewayIntentBits, 
-  ActionRowBuilder, 
-  ButtonBuilder, 
-  ButtonStyle, 
-  Events, 
-  EmbedBuilder, 
-  AttachmentBuilder 
-} = require('discord.js');
+// index.js
+require('dotenv').config();
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, Events, EmbedBuilder, AttachmentBuilder } = require('discord.js');
+const mongoose = require('mongoose');
 const fs = require('fs');
 const path = require('path');
 
-const client = new Client({ 
-  intents: [ 
-    GatewayIntentBits.Guilds, 
-    GatewayIntentBits.GuildVoiceStates, 
-    GatewayIntentBits.GuildMembers, 
-    GatewayIntentBits.GuildMessages, 
-    GatewayIntentBits.MessageContent 
-  ] 
+// ===== MongoDB Setup =====
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log('✅ MongoDB connected'))
+  .catch(err => console.error('❌ MongoDB connection error:', err));
+
+// ===== User Schema =====
+const userSchema = new mongoose.Schema({
+  userId: { type: String, required: true, unique: true },
+  total: { type: Number, default: 0 },
+  active: { type: Boolean, default: false },
+  lastClick: { type: Number, default: 0 }
+});
+const User = mongoose.model('User', userSchema);
+
+// ===== Discord Client =====
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildVoiceStates,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ]
 });
 
 const TOKEN = process.env.TOKEN;
 const ASSIST_CHANNELS = (process.env.ASSIST_CHANNELS || '').split(',').filter(Boolean);
 
-// Ensure data.json exists
-if (!fs.existsSync('data.json')) fs.writeFileSync('data.json', '{}');
-let data = JSON.parse(fs.readFileSync('data.json'));
-
-// ----- Buttons -----
+// ===== Buttons =====
 const row = new ActionRowBuilder().addComponents(
   new ButtonBuilder().setCustomId('in').setLabel('IN').setStyle(ButtonStyle.Success),
   new ButtonBuilder().setCustomId('out').setLabel('OUT').setStyle(ButtonStyle.Danger)
 );
 
-// ===== HELPER: SEND PANEL =====
+// ===== Helper: Get or Create User =====
+async function getUser(userId) {
+  let user = await User.findOne({ userId });
+  if (!user) {
+    user = new User({ userId });
+    await user.save();
+  }
+  return user;
+}
+
+// ===== PANEL =====
 async function sendPanel(channel) {
   try {
     const filePath = path.join(__dirname, 'assets', 'design.gif');
-
-    // --- Debugging for Railway ---
-    console.log("🔹 __dirname:", __dirname);
-    const assetsPath = path.join(__dirname, 'assets');
-    if (fs.existsSync(assetsPath)) {
-      console.log("🔹 Files in assets:", fs.readdirSync(assetsPath));
-    } else {
-      console.log("❌ Assets folder missing!");
-    }
-
-    if (!fs.existsSync(filePath)) return channel.send("❌ GIF file not found in ./assets/design.gif");
+    if (!fs.existsSync(filePath)) return channel.send("❌ GIF not found");
 
     const attachment = new AttachmentBuilder(filePath);
     const embed = new EmbedBuilder()
       .setColor(0x0099FF)
       .setTitle("Fury Management System")
       .setDescription("Click **IN** to start the timer. Must click every 30 min.")
-      .setImage('attachment://design.gif') // Must match attachment filename
+      .setImage('attachment://design.gif')
       .setFooter({ text: "Fury RP" });
 
     await channel.send({ embeds: [embed], files: [attachment], components: [row] });
-    console.log("✅ Panel sent successfully with embed and GIF!");
   } catch (err) {
-    console.error("❌ Failed to send panel:", err);
-    await channel.send("❌ Failed to send panel. Check bot permissions.");
+    console.error(err);
   }
 }
 
 // ===== MESSAGE HANDLER =====
-client.on('messageCreate', async (msg) => {
+client.on('messageCreate', async msg => {
   if (!msg.guild || msg.author.bot) return;
 
-  if (msg.content === '!panel') {
-    await sendPanel(msg.channel);
-  }
+  if (msg.content === '!panel') return sendPanel(msg.channel);
 
   if (msg.content === '!leaderboard') {
-    try {
-      const sorted = Object.entries(data).sort((a,b) => b[1].total - a[1].total);
-      let description = sorted.length ? '' : 'No leaderboard data yet!';
-      for (let i = 0; i < sorted.length; i++) {
-        const [userId, info] = sorted[i];
-        description += `**${i+1}.** <@${userId}> — **${info.total} points**\n`;
-      }
+    const users = await User.find().sort({ total: -1 }).limit(50); // top 50
+    let desc = users.length ? '' : 'No leaderboard data yet!';
+    users.forEach((u, i) => {
+      desc += `**${i + 1}.** <@${u.userId}> — **${u.total} points**\n`;
+    });
 
-      await msg.channel.send({ 
-        embeds: [new EmbedBuilder()
+    await msg.channel.send({
+      embeds: [
+        new EmbedBuilder()
           .setColor(0xFFD700)
-          .setTitle('🏆 Fury Leaderboard (1 point = 5min)')
-          .setDescription(description)
-          .setFooter({ text: 'Fury Management System' })
-          .setTimestamp()
-        ]
-      });
-    } catch (err) {
-      console.error("❌ LEADERBOARD ERROR:", err);
-    }
+          .setTitle('🏆 Fury Leaderboard')
+          .setDescription(desc)
+      ]
+    });
   }
 
   if (msg.content === '!resetpoints') {
-    try {
-      for (const userId in data) data[userId].total = 0;
-      fs.writeFileSync('data.json', JSON.stringify(data, null, 2));
-
-      await msg.channel.send({ 
-        embeds: [new EmbedBuilder()
-          .setColor(0xFF0000)
-          .setTitle('🏆 Fury Leaderboard Reset')
-          .setDescription('All points reset to 0!')
-          .setFooter({ text: 'Fury Management System' })
-          .setTimestamp()
-        ]
-      });
-    } catch (err) {
-      console.error("❌ RESET ERROR:", err);
-    }
+    await User.updateMany({}, { $set: { total: 0 } });
+    msg.channel.send("✅ All points reset!");
   }
 });
 
@@ -124,89 +103,79 @@ client.on(Events.InteractionCreate, async interaction => {
   if (!interaction.isButton()) return;
 
   const userId = interaction.user.id;
-  if (!data[userId]) data[userId] = { total: 0, active: false, lastClick: 0 };
+  let user = await getUser(userId);
 
   const member = interaction.guild.members.cache.get(userId);
   const inAssist = member?.voice.channelId && ASSIST_CHANNELS.includes(member.voice.channelId);
 
-  if (member?.voice.selfDeaf) {
-    return interaction.reply({ content: '🚫 You are deafened, cannot sign IN.', ephemeral: true });
-  }
-
-  if (!inAssist) {
-    return interaction.reply({ content: '❌ You must be in assist VC!', ephemeral: true });
-  }
+  if (!inAssist) return interaction.reply({ content: '❌ Join assist VC', ephemeral: true });
 
   if (interaction.customId === 'in') {
-    if (data[userId].active) return interaction.reply({ content: '⚠️ Already signed in!', ephemeral: true });
-    data[userId].active = true;
-    data[userId].lastClick = Date.now();
-    fs.writeFileSync('data.json', JSON.stringify(data, null, 2));
-    return interaction.reply({ content: '✅ Signed IN! Timer started.', ephemeral: true });
+    if (user.active) return interaction.reply({ content: '⚠️ Already IN', ephemeral: true });
+
+    user.active = true;
+    user.lastClick = Date.now();
+    await user.save();
+
+    return interaction.reply({ content: '✅ Signed IN', ephemeral: true });
   }
 
   if (interaction.customId === 'out') {
-    if (!data[userId].active) return interaction.reply({ content: '⚠️ Not signed in!', ephemeral: true });
-    data[userId].active = false;
-    data[userId].lastClick = 0;
-    fs.writeFileSync('data.json', JSON.stringify(data, null, 2));
-    return interaction.reply({ content: '⛔ Signed OUT!', ephemeral: true });
+    if (!user.active) return interaction.reply({ content: '⚠️ Not IN', ephemeral: true });
+
+    user.active = false;
+    user.lastClick = 0;
+    await user.save();
+
+    return interaction.reply({ content: '⛔ Signed OUT', ephemeral: true });
   }
 });
 
 // ===== TIMER LOOP =====
 setInterval(async () => {
   const now = Date.now();
-  for (const [userId, user] of Object.entries(data)) {
-    if (!user.active) continue;
+  const users = await User.find({ active: true });
 
+  for (const user of users) {
     let member = null;
     for (const g of client.guilds.cache.values()) {
-      const m = g.members.cache.get(userId);
+      const m = g.members.cache.get(user.userId);
       if (m) { member = m; break; }
     }
-
     if (!member || !member.voice.channelId) continue;
     const inAssist = ASSIST_CHANNELS.includes(member.voice.channelId);
 
-    if (!inAssist || member.voice.selfDeaf || now - user.lastClick > 30 * 60 * 1000) {
+    if (!inAssist || now - user.lastClick > 30 * 60 * 1000) {
       user.active = false;
       user.lastClick = 0;
-
-      try {
-        const u = await client.users.fetch(userId);
-        if (!inAssist) await u.send('⛔ You left assist VC. Signed OUT.');
-        else if (member.voice.selfDeaf) await u.send('🚫 You deafened yourself. Signed OUT.');
-        else await u.send('⏰ 30 min passed. Signed OUT.');
-      } catch {}
-
+      await user.save();
       continue;
     }
 
     user.total += 1;
+    await user.save();
   }
 
-  fs.writeFileSync('data.json', JSON.stringify(data, null, 2));
-  console.log('✅ Timer loop ran');
+  console.log("✅ Timer loop ran");
 }, 5 * 60 * 1000);
 
 // ===== VOICE UPDATE =====
 client.on('voiceStateUpdate', async (oldState, newState) => {
   const member = newState.member || oldState.member;
   const userId = member.id;
-
-  if (!data[userId]?.active) return;
+  let user = await User.findOne({ userId });
+  if (!user?.active) return;
 
   if ((oldState.selfDeaf === false && newState.selfDeaf === true) || newState.selfDeaf) {
-    data[userId].active = false;
-    data[userId].lastClick = 0;
-    fs.writeFileSync('data.json', JSON.stringify(data, null, 2));
+    user.active = false;
+    user.lastClick = 0;
+    await user.save();
     try { await member.send('🚫 You deafened yourself. Timer stopped and signed OUT.'); } catch {}
   }
 });
 
 // ===== READY =====
-client.once('ready', () => {
+client.once('clientReady', () => {
   console.log(`${client.user.tag} is online!`);
 });
 
